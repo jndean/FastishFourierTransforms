@@ -8,9 +8,11 @@ def FFT_step1_reference(x, N, N_min=32):
     M = np.exp(-2j * np.pi * n * k / N_min)
     X = np.dot(M, x.reshape((N_min, -1)))
 
-    return X
+    return X.flatten()
 
 def FFT_step2_reference(X, N, N_min=32):
+    X = X.reshape((N_min, N // N_min))
+
     while X.shape[0] < N:
         X_even = X[:, :X.shape[1] // 2]
         X_odd = X[:, X.shape[1] // 2:]
@@ -19,48 +21,50 @@ def FFT_step2_reference(X, N, N_min=32):
         X = np.vstack([X_even + factor * X_odd,
                        X_even - factor * X_odd])
 
-    return X.ravel()
+    return X.flatten()
 
 
 def FFT_step1(x, N, N_min=32):
     n = np.arange(N_min)
     k = n[:, None]
-    M = np.exp(-2j * np.pi * n * k / N_min)
+    M = np.exp(-2j * np.pi * n * k / N_min).flatten()
 
     num_blocks = N // N_min
-    X = np.empty(shape=(N_min, num_blocks), dtype=np.complex)
+    X = np.empty(N, dtype=np.complex)
 
     for block in range(num_blocks):
         for k in range(N_min):
             X_k = 0
             for n in range(N_min):
-                X_k += M[k, n] * x[n * num_blocks + block]
-            X[k, block] = X_k
+                X_k += M[k * N_min + n] * x[n * num_blocks + block]
+            X[k * num_blocks + block] = X_k
 
     return X
 
 
 def FFT_step2(X, N, N_min=32):
     all_factors = np.exp(-1j * np.pi * np.arange(N // 2) / (N//2))
-    stage = N_min
-    step_size = N // (2 * N_min)
+    num_blocks = N_min
+    block_size = N // N_min
+    half_block_size = block_size // 2
 
-    while stage < N:
-        Y = np.empty((stage * 2, step_size), dtype=X.dtype)
+    while num_blocks < N:
+        Y = np.empty_like(X)
 
-        for block in range(stage):  # Row of X
-            for i in range(step_size):  # Column of X
-                even = X[block, i]
-                odd = X[block, i + step_size]
-                odd *= all_factors[block * step_size]
-                Y[block, i] = even + odd
-                Y[stage + block, i] = even - odd
+        for block in range(num_blocks):  # Row of X
+            for i in range(half_block_size):  # Column of X
+                even = X[block * block_size + i]
+                odd = X[block * block_size + half_block_size + i]
+                odd *= all_factors[block * half_block_size]
+                Y[block * half_block_size + i] = even + odd
+                Y[(num_blocks + block) * half_block_size + i] = even - odd
         
         X = Y
-        stage *= 2
-        step_size //= 2
+        num_blocks *= 2
+        block_size //= 2
+        half_block_size = block_size // 2
 
-    return X.ravel()
+    return X
 
 
 
