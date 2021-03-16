@@ -5,8 +5,7 @@ success = "\033[92mSuccess!\033[0m"
 failure = "\033[91mFailure :(\033[0m"
 
 
-
-def FFT_step1_reference(x, N, min_block_size):    
+def FFT_step1_reference(x, N, min_block_size):
     # Perform an O[N^2] DFT on all sub-problems of size N-min
     n = np.arange(min_block_size)
     k = n[:, None]
@@ -36,7 +35,7 @@ def FFT_step1(x, N, min_block_size):
     M = np.exp(-2j * np.pi * n * k / min_block_size).flatten()
 
     num_blocks = N // min_block_size
-    X = np.empty(N, dtype=np.complex)
+    X = np.empty(N, dtype=complex)
 
     for block in range(num_blocks):
         for k in range(min_block_size):
@@ -73,10 +72,10 @@ def FFT_step2(X, N, min_block_size):
     return X
 
 
-def batched_FFT_step1_reference(x, N, batches, min_block_size):  
+def batched_FFT_step1_reference(x, N, batches, min_block_size):
     """
     Batched processing, "vectorised" with numpy
-    """  
+    """
     n = np.arange(min_block_size)
     k = n[:, None]
     M = np.exp(-2j * np.pi * n * k / min_block_size)
@@ -102,7 +101,6 @@ def batched_FFT_step2_reference(X, N, batches, min_block_size):
     return X.flatten()
 
 
-
 def batched_FFT_step1(x, N, batches, min_block_size):
     """
     Batched processing, explicitly organising the code the
@@ -112,7 +110,7 @@ def batched_FFT_step1(x, N, batches, min_block_size):
     k = n[:, None]
     M = np.exp(-2j * np.pi * n * k / min_block_size).flatten()
 
-    y = np.empty(N * batches, dtype=np.complex)
+    y = np.empty(N * batches, dtype=complex)
 
     def subthread(batch):
         num_blocks = N // min_block_size
@@ -150,22 +148,18 @@ def batched_FFT_step2(X, N, batches, min_block_size):
 
     num_blocks = min_block_size
     block_size = N // min_block_size
-    half_block_size = block_size // 2
 
     while num_blocks < N:
         Y = np.empty_like(X)
-        
+
         for b in range(batches):
             subthread(X, Y, b, num_blocks, block_size)
 
         X = Y
         num_blocks *= 2
         block_size //= 2
-        half_block_size = block_size // 2
 
     return X
-
-
 
 
 if __name__ == '__main__':
@@ -175,7 +169,7 @@ if __name__ == '__main__':
 
     min_block_size = min(N, 32)
     X = np.asarray(np.random.random(N * batches), dtype=float)
-    
+
 
     # Singular burst processing #
     x = X[::batches]
@@ -202,7 +196,7 @@ if __name__ == '__main__':
 
     print("Batched Phase 1: ", 
         success if np.allclose(batched_out1, batched_out1_reference) else failure)
-    print("Batched Phase 2: ", 
+    print("Batched Phase 2: ",
         success if np.allclose(batched_out2, batched_out2_reference) else failure)
 
 
