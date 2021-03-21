@@ -7,7 +7,7 @@
 
 
 #define REAL_T uint8_t
-#define COMPLEX_T cuComplex
+#define COMPLEX_T cuFloatComplex
 
 
 
@@ -16,7 +16,7 @@ class FiFT {
     FiFT(const size_t burst_size, const size_t batch_size);
     ~FiFT();
 
-    void run(REAL_T* input, COMPLEX_T* out);
+    void run(const REAL_T* input, COMPLEX_T* out);
     
  private:
    

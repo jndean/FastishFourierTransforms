@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     // Cleanup //
     delete[] h_input, h_output;
     checkCudaErrors(cudaFree(d_input));
-    checkCudaErrors( cudaFree(d_output));
+    checkCudaErrors(cudaFree(d_output));
     
     return EXIT_SUCCESS;
 }
