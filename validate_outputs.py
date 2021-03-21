@@ -8,7 +8,7 @@ import prototype
 
 
 if __name__ == '__main__':
-    
+
     result = subprocess.run(["make", "FiFT.so"])
     if result.returncode != 0:
         sys.exit("Failed to compile FiFT")
@@ -16,12 +16,6 @@ if __name__ == '__main__':
     fift_lib = ctypes.cdll.LoadLibrary("./FiFT.so")
     fift = fift_lib.test
     fift.restype = None
-    """fift.argtypes = [
-        ndpointer(ctypes.c_ubyte, flags="C_CONTIGUOUS"),
-        ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),
-        ctypes.c_size_t,
-        ctypes.c_size_t
-    ]"""
 
     N = 512
     batches = 50
@@ -35,7 +29,12 @@ if __name__ == '__main__':
          N,
          batches)
 
-    reference = prototype.batched_FFT_step1_reference(idata, N, batches, min_block_size)
-    #print(np.allclose(reference, odata))
+    success = "\033[92mSuccess!\033[0m"
+    failure = "\033[91mFailure :(\033[0m"
 
-    print(reference[0], odata[0])
+    reference = prototype.FFT_step1(idata, N, batches, min_block_size)
+    print('Step 1:', success if (
+        np.allclose(np.real(reference), odata[0::2], atol=0.01) and
+        np.allclose(np.imag(reference), odata[1::2], atol=0.01)
+    ) else failure)
+

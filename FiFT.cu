@@ -5,7 +5,7 @@
 #include <helper_cuda.h>
 
 
-#define FFT_BASE_BLOCK 16
+#define BASE_BLOCK 16
 
 
 
@@ -31,7 +31,7 @@ FiFT::~FiFT() {
   as a cooperative warp. Would  the increased need for sync hurt that?
 */
 
-#define FFT_STEP1_THREADBLOCK 32
+#define STEP1_THREADBLOCK 32
 
 __global__ static void FFT_step1(const REAL_T* input,
 				 COMPLEX_T* output,
@@ -41,36 +41,36 @@ __global__ static void FFT_step1(const REAL_T* input,
     const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
     if (burst >= batch_size) return;
 
-    const int num_blocks = burst_size / FFT_BASE_BLOCK;
+    const int num_blocks = burst_size / BASE_BLOCK;
 
     // TODO: store as real or complex? i.e. cast ost or shared mem cost?
-    __shared__ REAL_T shared_mem[FFT_BASE_BLOCK * FFT_STEP1_THREADBLOCK];
+    __shared__ REAL_T shared_mem[BASE_BLOCK * STEP1_THREADBLOCK];
 
     // Multiply each block by the base case twiddle matrix
     for (int block = 0; block < num_blocks; ++block) {
 
 	// Read the whole block into shared mem in a loop
 	// Store it transposed, so adjacent threads aren't getting bank conflicts
-	const REAL_T* global_block = &input[burst + block * FFT_BASE_BLOCK * batch_size];
+	const REAL_T* global_block = &input[burst + block * batch_size];
 	REAL_T* local_block = &shared_mem[threadIdx.x];
-	for (int k = 0; k < FFT_BASE_BLOCK; ++k) {
-	    local_block[k * FFT_STEP1_THREADBLOCK] = global_block[k * batch_size];
+	for (int k = 0; k < BASE_BLOCK; ++k) {
+	    local_block[k * STEP1_THREADBLOCK] = global_block[k * num_blocks * batch_size];
 	}
 	
 	// Each element in the output block
-	for (int k = 0; k < FFT_BASE_BLOCK; ++k) {
-	    COMPLEX_T y_k = {0, 0};
+	for (int k = 0; k < BASE_BLOCK; ++k) {
+	    COMPLEX_T y_k = {0.0f, 0.0f};
 
 	    // Multiply the block by a row from the twiddle matrix
-	    for (int n = 0; n < FFT_BASE_BLOCK; ++n) {
+	    for (int n = 0; n < BASE_BLOCK; ++n) {
 		// TODO: do the multiplication by hand, removing the zero terms
-		COMPLEX_T term = {(float) local_block[n * FFT_STEP1_THREADBLOCK], 0};
-		float exponent = 2 * 3.14159 * n * k / (float) FFT_BASE_BLOCK;
+		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
+		float exponent = -2.0 * 3.141592653589793 * n * k / (float) BASE_BLOCK;
 		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
-
-	    output[burst + (block * FFT_BASE_BLOCK + k) * batch_size] = y_k;
+	    
+	    output[burst + (block + k * num_blocks) * batch_size] = y_k;
 	}
     }
     
@@ -84,11 +84,11 @@ __global__ void copy_kernel(const REAL_T* input, COMPLEX_T* output, const size_t
 }
 
 void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
-    int num_blocks = (m_batch_size + FFT_STEP1_THREADBLOCK - 1) / FFT_STEP1_THREADBLOCK;
-    FFT_step1<<<num_blocks, FFT_STEP1_THREADBLOCK>>>(input,
-						     output,
-						     m_burst_size,
-						     m_batch_size);
+    int num_blocks = (m_batch_size + STEP1_THREADBLOCK - 1) / STEP1_THREADBLOCK;
+    FFT_step1<<<num_blocks, STEP1_THREADBLOCK>>>(input,
+						 output,
+						 m_burst_size,
+						 m_batch_size);
 };
 
 
