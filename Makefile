@@ -1,21 +1,22 @@
 
 TARGET = main
-INCDIR = -I/usr/local/cuda-11.0/targets/x86_64-linux/include/ \
-	 -I/usr/local/cuda-11.0/samples/common/inc/
+INCDIR = -I/usr/local/cuda-9.0/include/ \
+	 -I/usr/local/cuda-9.0/samples/common/inc/
+NVCC = /usr/local/cuda-9.0/bin/nvcc
 CFLAGS = -O3 ${INCDIR} -std=c++11 -g
 
 default: FiFT.o main.o
-	nvcc ${CFLAGS}  $^ -o ${TARGET}
+	${NVCC} ${CFLAGS}  $^ -o ${TARGET}
 
 %.o: %.cu FiFT.h
-	nvcc $(CFLAGS) -c $< -o $@
+	${NVCC} $(CFLAGS) -c $< -o $@
 
 %.o: %.cpp FiFT.h
 	g++ $(CFLAGS) -c $< -o $@
 
 
 FiFT.so: FiFT.cu FiFT.h
-	nvcc $(CFLAGS)  --compiler-options="-fPIC -shared" FiFT.cu -o FiFT.so
+	${NVCC} $(CFLAGS)  --compiler-options="-fPIC -shared" FiFT.cu -o FiFT.so
 
 
 clean:

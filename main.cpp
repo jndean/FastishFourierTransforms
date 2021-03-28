@@ -15,7 +15,7 @@
 int main(int argc, char** argv) {
 
     const size_t burst_size = 512;
-    const size_t batch_size = 50;
+    const size_t batch_size = 640*480;
 
     int num_elts = burst_size * batch_size;
     
@@ -38,15 +38,26 @@ int main(int argc, char** argv) {
     cudaMemcpy(d_input, h_input, num_elts * sizeof(REAL_T), cudaMemcpyHostToDevice);
 
 
-    // Run the FFT //
+    // Prep the workspace //
     FiFT fift(burst_size, batch_size);
+
+    // Run and time //
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    
+    cudaEventRecord(start);
     fift.run(d_input, d_output);
+    cudaEventRecord(stop);
 
     
     cudaMemcpy(h_output, d_output, num_elts * sizeof(COMPLEX_T), cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
 
     
-    cudaDeviceSynchronize();
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("Execution time: %0.1fms\n", milliseconds);
     
     // Cleanup //
     delete[] h_input, h_output;

@@ -106,6 +106,7 @@ if __name__ == '__main__':
 
     out1 = FFT_step1(X, N, batches, min_block_size)
     out2 = FFT_step2(out1, N, batches, min_block_size)
+    out2_transposed = FFT_step2_transposed(out1, N, batches, min_block_size)
 
     success = "\033[92mSuccess!\033[0m"
     failure = "\033[91mFailure :(\033[0m"
@@ -114,3 +115,5 @@ if __name__ == '__main__':
           success if np.allclose(out1, out1_reference) else failure)
     print("Phase 2: ",
           success if np.allclose(out2, out2_reference) else failure)
+    print("Phase 2 transposed: ",
+          success if np.allclose(out2_transposed, out2_reference) else failure)
