@@ -43,11 +43,10 @@ def FFT_step1(x, N, batches, min_block_size):
                 for n in range(min_block_size):
                     elt = x[(n * num_blocks + block) * batches + batch]
                     # twiddle = M[k * min_block_size + n]
-                    exponent = -2 * np.pi * n * k / min_block_size;
+                    exponent = -2 * np.pi * n * k / min_block_size
                     twiddle = math.cos(exponent) + 1j * math.sin(exponent)
                     y_k += elt * twiddle
 
-                #y_k = x[(k * num_blocks + block) * batches + batch]
                 y[(k * num_blocks + block) * batches + batch] = y_k
 
     for b in range(batches):
@@ -68,7 +67,12 @@ def FFT_step2(X, N, batches, min_block_size):
             for i in range(half_block_size):  # Column of X
                 even = x[(block * block_size + i) * batches + batch]
                 odd = x[(block * block_size + half_block_size + i) * batches + batch]
-                odd *= all_factors[block * half_block_size]
+
+                # odd *= all_factors[block * half_block_size]
+                exponent = -2 * np.pi * block * half_block_size / N
+                twiddle = math.cos(exponent) + 1j * math.sin(exponent)
+                odd *= twiddle
+
                 y[(block * half_block_size + i) * batches + batch] = even + odd
                 y[((num_blocks + block) * half_block_size + i) * batches + batch] = even - odd
 

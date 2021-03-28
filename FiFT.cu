@@ -1,5 +1,8 @@
 #include "FiFT.h"
 
+#include <cassert>
+#include <algorithm>
+
 #include <cuda_runtime_api.h>
 #include <cuda.h>
 #include <helper_cuda.h>
@@ -33,10 +36,10 @@ FiFT::~FiFT() {
 
 #define STEP1_THREADBLOCK 32
 
-__global__ static void FFT_step1(const REAL_T* input,
-				 COMPLEX_T* output,
-				 const size_t burst_size,
-				 const size_t batch_size)
+__global__ static void step1_kernel(const REAL_T* input,
+				    COMPLEX_T* output,
+				    const size_t burst_size,
+				    const size_t batch_size)
 {
     const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
     if (burst >= batch_size) return;
@@ -72,23 +75,77 @@ __global__ static void FFT_step1(const REAL_T* input,
 	    
 	    output[burst + (block + k * num_blocks) * batch_size] = y_k;
 	}
-    }
-    
+    } 
 }
-    
 
-__global__ void copy_kernel(const REAL_T* input, COMPLEX_T* output, const size_t n) {
-    int i =  blockDim.x * blockIdx.x + threadIdx.x;
-    if (i > n) return;
-    output[i] = make_cuComplex (input[i], 0.f);
+
+void FiFT::run_step1(const REAL_T* input, COMPLEX_T* output)
+{
+    int num_blocks = (m_batch_size + STEP1_THREADBLOCK - 1) / STEP1_THREADBLOCK;
+    step1_kernel<<<num_blocks, STEP1_THREADBLOCK>>>(input,
+						    output,
+						    m_burst_size,
+						    m_batch_size);
 }
+
+
+#define STEP2_THREADBLOCK 32
+
+__global__ static void step2_kernel(const COMPLEX_T* input,
+				    COMPLEX_T* output,
+				    const int block_size,
+				    const int num_blocks,
+				    const int batch_size,
+				    const int burst_size)
+{
+    const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
+    if (burst >= batch_size) return;
+    
+    const int half_block_size = block_size >> 1;
+    
+    for (int block = 0; block < num_blocks; ++block) {
+
+	float exponent = -2.0 * 3.141592653589793 * block * half_block_size / (float)burst_size;
+	COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
+	
+	for (int i = 0; i < half_block_size; ++i) {
+	    COMPLEX_T odd = input[(block * block_size + half_block_size + i) * batch_size + burst];
+	    COMPLEX_T even = input[(block * block_size + i) * batch_size + burst];
+	    odd = cuCmulf(odd, twiddle);
+	    output[(block * half_block_size + i) * batch_size + burst] = cuCaddf(even, odd);
+	    output[((num_blocks + block) * half_block_size + i) * batch_size + burst] = cuCsubf(even, odd);
+	}
+    }
+} 
+
+
+void FiFT::run_step2(COMPLEX_T* input, COMPLEX_T* output)
+{
+    int num_FFT_blocks = BASE_BLOCK;
+    int FFT_block_size = m_burst_size / num_FFT_blocks;
+
+    COMPLEX_T *read = input, *write = output;
+
+    while (num_FFT_blocks < m_burst_size) {
+	int num_thread_blocks = (m_batch_size + STEP2_THREADBLOCK - 1) / STEP2_THREADBLOCK;
+	step2_kernel<<<num_thread_blocks, STEP2_THREADBLOCK>>>(read,
+							       write,
+							       FFT_block_size,
+							       num_FFT_blocks,
+							       m_batch_size,
+							       m_burst_size);
+	std::swap(read, write);
+	num_FFT_blocks *= 2;
+	FFT_block_size /= 2;
+    }
+    assert(read == output);
+}
+
+
 
 void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
-    int num_blocks = (m_batch_size + STEP1_THREADBLOCK - 1) / STEP1_THREADBLOCK;
-    FFT_step1<<<num_blocks, STEP1_THREADBLOCK>>>(input,
-						 output,
-						 m_burst_size,
-						 m_batch_size);
+    run_step1(input, m_workspace);
+    run_step2(m_workspace, output);
 };
 
 
@@ -96,10 +153,35 @@ void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
 // ------------------------------ VALIDATION WRAPPER ------------------------------ //
 
 extern "C"
-void test(const REAL_T* input,
-	  COMPLEX_T* output,
-	  const size_t burst_size,
-	  const size_t batch_size)
+void test_step1(const REAL_T* input,
+		COMPLEX_T* output,
+		const size_t burst_size,
+		const size_t batch_size)
+{
+
+    const size_t input_size = burst_size * batch_size * sizeof(REAL_T);
+    const size_t output_size = burst_size * batch_size * sizeof(COMPLEX_T);
+    REAL_T *d_input;
+    COMPLEX_T *d_output;
+    checkCudaErrors(cudaMalloc((void**)&d_input, input_size));
+    checkCudaErrors(cudaMalloc((void**)&d_output, output_size));
+    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
+    
+    FiFT fift(burst_size, batch_size);
+    fift.run_step1(d_input, d_output);
+
+    cudaMemcpy(output, d_output, output_size, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    checkCudaErrors(cudaFree(d_input));
+    checkCudaErrors(cudaFree(d_output));
+}
+
+
+extern "C"
+void test_step2(const REAL_T* input,
+		COMPLEX_T* output,
+		const size_t burst_size,
+		const size_t batch_size)
 {
 
     const size_t input_size = burst_size * batch_size * sizeof(REAL_T);

@@ -18,8 +18,10 @@ class FiFT {
 
     void run(const REAL_T* input, COMPLEX_T* out);
     
- private:
-   
+    //private:
+    void run_step1(const REAL_T* input, COMPLEX_T* out);
+    void run_step2(COMPLEX_T* input, COMPLEX_T* output);
+	
     const size_t m_burst_size;
     const size_t m_batch_size;
     const size_t m_num_elts;
