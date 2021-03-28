@@ -1,10 +1,13 @@
 import ctypes
 import numpy as np
-from numpy.ctypeslib import ndpointer
 import subprocess
 import sys
 
 import prototype
+
+
+success = "\033[92mSuccess!\033[0m"
+failure = "\033[91mFailure :(\033[0m"
 
 
 if __name__ == '__main__':
@@ -27,10 +30,7 @@ if __name__ == '__main__':
                     N,
                     batches)
 
-    success = "\033[92mSuccess!\033[0m"
-    failure = "\033[91mFailure :(\033[0m"
-
-    reference = prototype.FFT_step1_reference(idata, N, batches, min_block_size)
+    reference = prototype.FFT_step1(idata, N, batches, min_block_size)
     print('Step 1:', success if (
         np.allclose(np.real(reference), odata[0::2], atol=0.01) and
         np.allclose(np.imag(reference), odata[1::2], atol=0.01)
@@ -47,4 +47,3 @@ if __name__ == '__main__':
         np.allclose(np.real(reference), odata[0::2], atol=0.1) and
         np.allclose(np.imag(reference), odata[1::2], atol=0.1)
     ) else failure)
-

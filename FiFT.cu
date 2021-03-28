@@ -1,6 +1,5 @@
 #include "FiFT.h"
 
-#include <cassert>
 #include <algorithm>
 
 #include <cuda_runtime_api.h>
@@ -138,14 +137,19 @@ void FiFT::run_step2(COMPLEX_T* input, COMPLEX_T* output)
 	num_FFT_blocks *= 2;
 	FFT_block_size /= 2;
     }
-    assert(read == output);
 }
 
 
 
 void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
-    run_step1(input, m_workspace);
-    run_step2(m_workspace, output);
+    COMPLEX_T *step2_input = m_workspace;
+    COMPLEX_T *step2_output = output;
+    int N = m_burst_size / BASE_BLOCK, log2N = 1;
+    while (N >>= 1) log2N++;
+    if (log2N & 1) std::swap(step2_input, step2_output);
+    
+    run_step1(input, step2_input);
+    run_step2(step2_input, step2_output);
 };
 
 
