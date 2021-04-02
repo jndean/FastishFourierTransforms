@@ -55,10 +55,10 @@ if __name__ == '__main__':
     # #### Test Step 2 Transposed #### #
 
     ref1_transpose = np.transpose(reference1.reshape((batches, N)), (1, 0)).flatten()
-    fift.test_step2(ref1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    N,
-                    batches)
+    fift.test_step2_transpose(ref1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                              odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                              N,
+                              batches)
 
     ref2_transpose = np.transpose(reference2.reshape((batches, N)), (1, 0)).flatten()
 
@@ -66,3 +66,8 @@ if __name__ == '__main__':
         np.allclose(np.real(ref2_transpose), odata[0::2], atol=0.1) and
         np.allclose(np.imag(ref2_transpose), odata[1::2], atol=0.1)
     ) else failure)
+
+    print('ref ', np.real(reference2)[:5])
+    print('ref ', np.real(ref2_transpose)[:5])
+    print('fift', odata[::2][:5])
+    

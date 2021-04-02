@@ -266,10 +266,10 @@ void test_run(const REAL_T* input,
 
 
 extern "C"
-void test_step2(COMPLEX_T* input,
-		    COMPLEX_T* output,
-		    const size_t burst_size,
-		    const size_t batch_size)
+void test_step2_transpose(COMPLEX_T* input,
+			  COMPLEX_T* output,
+			  const size_t burst_size,
+			  const size_t batch_size)
 {
 
     const size_t input_size = burst_size * batch_size * sizeof(COMPLEX_T);
