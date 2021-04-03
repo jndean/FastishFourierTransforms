@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
 
     const size_t burst_size = 512;
     const size_t batch_size = 640*480;
+    const size_t repetitions = 30;
 
     int num_elts = burst_size * batch_size;
     
@@ -47,7 +48,9 @@ int main(int argc, char** argv) {
     cudaEventCreate(&stop);
     
     cudaEventRecord(start);
-    fift.run(d_input, d_output);
+    for (int i=0; i<repetitions; ++i) {
+	fift.run(d_input, d_output);
+    }
     cudaEventRecord(stop);
 
     
@@ -57,7 +60,7 @@ int main(int argc, char** argv) {
     
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("Execution time: %0.1fms\n", milliseconds);
+    printf("Execution time: %0.1fns per burst\n", 1000000.0 * milliseconds / (batch_size*repetitions));
     
     // Cleanup //
     delete[] h_input, h_output;

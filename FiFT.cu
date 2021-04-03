@@ -143,7 +143,6 @@ void FiFT::run_step2(COMPLEX_T* input, COMPLEX_T* output)
 
 __global__ static void step2_transposed_kernel(const COMPLEX_T* input,
 					       COMPLEX_T* output,
-					       const int batch_size,
 					       const int burst_size)
 {
     const int burst = blockIdx.x;
@@ -151,8 +150,8 @@ __global__ static void step2_transposed_kernel(const COMPLEX_T* input,
 
     extern __shared__ COMPLEX_T local[];
     local[element] = input[burst * burst_size + element];
-    local[element * 2] = input[burst * burst_size + element * 2];
-    
+    local[element + burst_size/2] = input[burst * burst_size + element + burst_size/2];
+
     int num_blocks = BASE_BLOCK;
     int block_size = burst_size / num_blocks;
     int half_block_size = block_size >> 1;
@@ -180,8 +179,9 @@ __global__ static void step2_transposed_kernel(const COMPLEX_T* input,
     }
 
     __syncthreads();
+    
     output[burst * burst_size + element] = local[element];
-    output[burst * burst_size + element * 2] = local[element * 2];
+    output[burst * burst_size + element + burst_size/2] = local[element + burst_size/2];
 } 
 
 
@@ -190,11 +190,10 @@ void FiFT::run_step2_transposed(COMPLEX_T* input, COMPLEX_T* output)
     const int num_blocks = m_batch_size;
     const int threads_per_block = m_burst_size / 2;
     const int sharedmem = sizeof(COMPLEX_T) * m_burst_size;
-    
+
     step2_transposed_kernel<<<num_blocks, threads_per_block, sharedmem>>>
 	(input,
 	 output,
-	 m_batch_size,
 	 m_burst_size);
 }
 
@@ -278,7 +277,7 @@ void test_step2_transpose(COMPLEX_T* input,
     COMPLEX_T *d_output;
     checkCudaErrors(cudaMalloc((void**)&d_input, input_size));
     checkCudaErrors(cudaMalloc((void**)&d_output, output_size));
-    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice));
     
     FiFT fift(burst_size, batch_size);
     fift.run_step2_transposed(d_input, d_output);
@@ -288,3 +287,5 @@ void test_step2_transpose(COMPLEX_T* input,
     checkCudaErrors(cudaFree(d_input));
     checkCudaErrors(cudaFree(d_output));
 }
+
+
