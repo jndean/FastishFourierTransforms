@@ -13,21 +13,20 @@ atol = 0.5
 
 if __name__ == '__main__':
 
+    N = 512
+    batches = 1
+
     result = subprocess.run(["make", "FiFT.so"])
     if result.returncode != 0:
         sys.exit("Failed to compile FiFT")
-
     fift = ctypes.cdll.LoadLibrary("./FiFT.so")
-
-    N = 512
-    batches = 100
-    min_block_size = 4
+    min_block_size = ctypes.c_int.in_dll(fift, "base_block").value
 
     idata = np.frombuffer(np.random.bytes(N * batches), dtype=np.uint8)
     odata = np.empty(N * batches * 2, dtype=np.float32)
 
     # #### Test Step 1 #### #
-    
+
     fift.test_step1(idata.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
                     odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                     N,

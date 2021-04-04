@@ -8,7 +8,9 @@
 
 
 #define BASE_BLOCK 4
+#define PI 3.141592653589793
 
+__device__ __constant__ COMPLEX_T twiddles[1024];
 
 
 FiFT::FiFT(const size_t burst_size, const size_t batch_size)
@@ -16,8 +18,17 @@ FiFT::FiFT(const size_t burst_size, const size_t batch_size)
     , m_batch_size(batch_size)
     , m_num_elts(batch_size * burst_size)
 {
+    // Allocate workspace
     size_t buf_size = burst_size * batch_size * sizeof(COMPLEX_T);
     checkCudaErrors(cudaMalloc(&m_workspace, buf_size));
+
+    // Precompute FFT twiddles and put them in constant memory
+    COMPLEX_T h_twiddles[burst_size/2];
+    for (int k = 0; k < burst_size/2; ++k) {
+	double exponent = -2.0 * PI * k / (double)burst_size;
+	h_twiddles[k] = {(float) cos(exponent), (float) sin(exponent)};
+    }
+    cudaMemcpyToSymbol(twiddles, h_twiddles, sizeof(COMPLEX_T) * (burst_size/2));
 };
 
 FiFT::~FiFT() {
@@ -67,7 +78,7 @@ __global__ static void step1_kernel(const REAL_T* input,
 	    for (int n = 0; n < BASE_BLOCK; ++n) {
 		// TODO: do the multiplication by hand, removing the zero terms
 		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
-		float exponent = -2.0 * 3.141592653589793 * n * k / (float) BASE_BLOCK;
+		float exponent = -2.0 * PI * n * k / (float) BASE_BLOCK;
 		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
@@ -104,7 +115,7 @@ __global__ static void step2_kernel(const COMPLEX_T* input,
     
     for (int block = 0; block < num_blocks; ++block) {
 
-	float exponent = -2.0 * 3.141592653589793 * block * half_block_size / (float)burst_size;
+	float exponent = -2.0 * PI * block * half_block_size / (float)burst_size;
 	COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
 	
 	for (int i = 0; i < half_block_size; ++i) {
@@ -164,8 +175,7 @@ __global__ static void step2_transposed_kernel(const COMPLEX_T* input,
 	COMPLEX_T even = local[block * block_size + block_elt];
 	COMPLEX_T odd = local[block * block_size + half_block_size + block_elt];
 	
-	float exponent = -2.0 * 3.141592653589793 * block * half_block_size / (float)burst_size;
-	COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
+	COMPLEX_T twiddle = twiddles[block * half_block_size];
 	odd = cuCmulf(odd, twiddle);
 
 	__syncthreads();
@@ -207,12 +217,15 @@ void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
     if (log2N & 1) std::swap(step2_input, step2_output);
     
     run_step1(input, step2_input);
-    run_step2(step2_input, step2_output);
+    run_step2_transposed(step2_input, step2_output);
 };
 
 
 
 // ------------------------------ VALIDATION WRAPPER ------------------------------ //
+
+extern "C"
+const int base_block = BASE_BLOCK;
 
 extern "C"
 void test_step1(const REAL_T* input,

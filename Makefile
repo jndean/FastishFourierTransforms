@@ -3,7 +3,7 @@ TARGET = main
 INCDIR = -I/usr/local/cuda-9.0/include/ \
 	 -I/usr/local/cuda-9.0/samples/common/inc/
 NVCC = /usr/local/cuda-9.0/bin/nvcc
-CFLAGS = -O3 ${INCDIR} -std=c++11 -g
+CFLAGS = -O3 ${INCDIR} -std=c++11 -g -lineinfo
 
 default: FiFT.o main.o
 	${NVCC} ${CFLAGS}  $^ -o ${TARGET}
