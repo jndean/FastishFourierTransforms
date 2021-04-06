@@ -7,7 +7,7 @@
 #include <helper_cuda.h>
 
 
-#define BASE_BLOCK 4
+#define BASE_BLOCK 32
 #define PI 3.141592653589793
 
 __device__ __constant__ COMPLEX_T twiddles[1024];
@@ -80,6 +80,7 @@ __global__ static void step1_kernel(const REAL_T* input,
 		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
 		float exponent = -2.0 * PI * n * k / (float) BASE_BLOCK;
 		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
+		//COMPLEX_T twiddle = {0.0f, 0.0f};
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
 	    
@@ -97,6 +98,62 @@ void FiFT::run_step1(const REAL_T* input, COMPLEX_T* output)
 						    m_burst_size,
 						    m_batch_size);
 }
+
+
+
+__global__ static void step1_transpose_kernel(const REAL_T* input,
+					      COMPLEX_T* output,
+					      const size_t burst_size,
+					      const size_t batch_size)
+{
+    const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
+    if (burst >= batch_size) return;
+
+    const int num_blocks = burst_size / BASE_BLOCK;
+
+    // TODO: store as real or complex? i.e. cast cost or shared mem cost?
+    __shared__ REAL_T shared_mem[BASE_BLOCK * STEP1_THREADBLOCK];
+
+    // Multiply each block by the base case twiddle matrix
+    for (int block = 0; block < num_blocks; ++block) {
+
+	// Read the whole block into shared mem in a loop
+	// Store it transposed, so adjacent threads aren't getting bank conflicts
+	const REAL_T* global_block = &input[burst + block * batch_size];
+	REAL_T* local_block = &shared_mem[threadIdx.x];
+	for (int k = 0; k < BASE_BLOCK; ++k) {
+	    local_block[k * STEP1_THREADBLOCK] = global_block[k * num_blocks * batch_size];
+	}
+	
+	// Each element in the output block
+	for (int k = 0; k < BASE_BLOCK; ++k) {
+	    COMPLEX_T y_k = {0.0f, 0.0f};
+
+	    // Multiply the block by a row from the twiddle matrix
+	    for (int n = 0; n < BASE_BLOCK; ++n) {
+		// TODO: do the multiplication by hand, removing the zero terms
+		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
+		float exponent = -2.0 * PI * n * k / (float) BASE_BLOCK;
+		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
+		//COMPLEX_T twiddle = {0.0f, 0.0f};
+		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
+	    }
+	    
+	    output[burst + (block + k * num_blocks) * batch_size] = y_k;
+	}
+    } 
+}
+
+
+void FiFT::run_step1_transpose(const REAL_T* input, COMPLEX_T* output)
+{
+    int num_blocks = (m_batch_size + STEP1_THREADBLOCK - 1) / STEP1_THREADBLOCK;
+    step1_transpose_kernel<<<num_blocks, STEP1_THREADBLOCK>>>(input,
+							      output,
+							      m_burst_size,
+							      m_batch_size);
+}
+
 
 
 #define STEP2_THREADBLOCK 32
@@ -152,7 +209,7 @@ void FiFT::run_step2(COMPLEX_T* input, COMPLEX_T* output)
 
 
 
-__global__ static void step2_transposed_kernel(const COMPLEX_T* input,
+__global__ static void step2_transpose_kernel(const COMPLEX_T* input,
 					       COMPLEX_T* output,
 					       const int burst_size)
 {
@@ -195,19 +252,24 @@ __global__ static void step2_transposed_kernel(const COMPLEX_T* input,
 } 
 
 
-void FiFT::run_step2_transposed(COMPLEX_T* input, COMPLEX_T* output)
+void FiFT::run_step2_transpose(COMPLEX_T* input, COMPLEX_T* output)
 {
     const int num_blocks = m_batch_size;
     const int threads_per_block = m_burst_size / 2;
     const int sharedmem = sizeof(COMPLEX_T) * m_burst_size;
 
-    step2_transposed_kernel<<<num_blocks, threads_per_block, sharedmem>>>
+    step2_transpose_kernel<<<num_blocks, threads_per_block, sharedmem>>>
 	(input,
 	 output,
 	 m_burst_size);
 }
 
 
+
+void FiFT::run_transposed(const REAL_T* input, COMPLEX_T* output) {
+    run_step1_transpose(input, m_workspace);
+    run_step2_transpose(m_workspace, output);
+};
 
 void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
     COMPLEX_T *step2_input = m_workspace;
@@ -217,7 +279,7 @@ void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
     if (log2N & 1) std::swap(step2_input, step2_output);
     
     run_step1(input, step2_input);
-    run_step2_transposed(step2_input, step2_output);
+    run_step2(step2_input, step2_output);
 };
 
 
@@ -277,6 +339,31 @@ void test_run(const REAL_T* input,
 }
 
 
+
+extern "C"
+void test_step1_transpose(const REAL_T* input,
+			  COMPLEX_T* output,
+			  const size_t burst_size,
+			  const size_t batch_size)
+{
+    const size_t input_size = burst_size * batch_size * sizeof(REAL_T);
+    const size_t output_size = burst_size * batch_size * sizeof(COMPLEX_T);
+    REAL_T *d_input;
+    COMPLEX_T *d_output;
+    checkCudaErrors(cudaMalloc((void**)&d_input, input_size));
+    checkCudaErrors(cudaMalloc((void**)&d_output, output_size));
+    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
+    
+    FiFT fift(burst_size, batch_size);
+    fift.run_step1_transpose(d_input, d_output);
+
+    cudaMemcpy(output, d_output, output_size, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    checkCudaErrors(cudaFree(d_input));
+    checkCudaErrors(cudaFree(d_output));
+}
+
+
 extern "C"
 void test_step2_transpose(COMPLEX_T* input,
 			  COMPLEX_T* output,
@@ -293,7 +380,7 @@ void test_step2_transpose(COMPLEX_T* input,
     checkCudaErrors(cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice));
     
     FiFT fift(burst_size, batch_size);
-    fift.run_step2_transposed(d_input, d_output);
+    fift.run_step2_transpose(d_input, d_output);
     
     cudaMemcpy(output, d_output, output_size, cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();

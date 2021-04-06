@@ -14,7 +14,7 @@ atol = 0.5
 if __name__ == '__main__':
 
     N = 512
-    batches = 1
+    batches = 10
 
     result = subprocess.run(["make", "FiFT.so"])
     if result.returncode != 0:
@@ -52,9 +52,21 @@ if __name__ == '__main__':
         np.allclose(np.imag(reference2), odata[1::2], atol=atol)
     ) else failure)
 
+    # #### Test Step 1 Transposed #### #
+    fift.test_step1_transpose(idata.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+                              odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                              N,
+                              batches)
+
+    ref1_transpose = np.transpose(reference1.reshape((min_block_size, -1, batches)), (2, 1, 0)).flatten()
+
+    print('Step 1 transpose:', success if (
+        np.allclose(np.real(ref1_transpose), odata[0::2], atol=atol) and
+        np.allclose(np.imag(ref1_transpose), odata[1::2], atol=atol)
+    ) else failure)
+
     # #### Test Step 2 Transposed #### #
 
-    ref1_transpose = np.transpose(reference1.reshape((batches, N)), (1, 0)).flatten()
     fift.test_step2_transpose(ref1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                               odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                               N,

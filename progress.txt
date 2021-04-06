@@ -1,0 +1,31 @@
+
+GPU: GTX 970
+Burst Size: 512
+Batch Size: 640*480
+
+
+First implementation of step1&2 (using min_block=32):
+456ms total
+step1 - 383ms
+step2 - 73ms
+1600 nanoseconds per burst
+
+
+Then changed min_block=4:
+166ms total
+step1 - 35.3ms
+step2 - 130.6ms
+532 nanoseconds per burst
+
+
+Implement transpose of step 2:
+151.4ms total
+step1 - 30.1ms
+step2 - 121.2ms
+490 nanoseconds per burst
+
+Put twiddle factors for step2 in constant memory:
+55ms total
+step1 - 30.1ms
+step2 - 25ms
+177 nanoseconds per burst

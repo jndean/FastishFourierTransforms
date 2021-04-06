@@ -2,17 +2,17 @@ import math
 import numpy as np
 
 
-def FFT_step1_reference(x, N, batches, min_block_size):
+def FFT_step1_reference(x, N, bursts, min_block_size):
     n = np.arange(min_block_size)
     k = n[:, None]
     M = np.exp(-2j * np.pi * n * k / min_block_size)
-    x = np.transpose(x.reshape((min_block_size, -1, batches)), (2, 0, 1))
+    x = np.transpose(x.reshape((min_block_size, -1, bursts)), (2, 0, 1))
     X = np.transpose(np.dot(M, x), (0, 2, 1))
     return X.flatten()
 
 
-def FFT_step2_reference(X, N, batches, min_block_size):
-    X = X.reshape((min_block_size, -1, batches))
+def FFT_step2_reference(X, N, bursts, min_block_size):
+    X = X.reshape((min_block_size, -1, bursts))
 
     while X.shape[0] < N:
         X_even = X[:, :X.shape[1] // 2, :]
@@ -25,7 +25,7 @@ def FFT_step2_reference(X, N, batches, min_block_size):
     return X.flatten()
 
 
-def FFT_step1(x, N, batches, min_block_size):
+def FFT_step1(x, N, bursts, min_block_size):
     """
     Explicitly organising the code the way it will be structured in CUDA
     """
@@ -33,48 +33,48 @@ def FFT_step1(x, N, batches, min_block_size):
     k = n[:, None]
     M = np.exp(-2j * np.pi * n * k / min_block_size).flatten()
 
-    y = np.empty(N * batches, dtype=np.complex64)
+    y = np.empty(N * bursts, dtype=np.complex64)
 
-    def subthread(batch):
+    def subthread(burst):
         num_blocks = N // min_block_size
         for block in range(num_blocks):
             for k in range(min_block_size):
                 y_k = 0
                 for n in range(min_block_size):
-                    elt = x[(n * num_blocks + block) * batches + batch]
+                    elt = x[(n * num_blocks + block) * bursts + burst]
                     # twiddle = M[k * min_block_size + n]
                     exponent = -2 * np.pi * n * k / min_block_size
                     twiddle = math.cos(exponent) + 1j * math.sin(exponent)
                     y_k += elt * twiddle
 
-                y[(k * num_blocks + block) * batches + batch] = y_k
+                y[(k * num_blocks + block) * bursts + burst] = y_k
 
-    for b in range(batches):
+    for b in range(bursts):
         subthread(b)
 
     return y
 
 
-def FFT_step2(X, N, batches, min_block_size):
+def FFT_step2(X, N, bursts, min_block_size):
     """
     Explicitly organising the code the way it will be structured in CUDA
     """
     all_factors = np.exp(-1j * np.pi * np.arange(N // 2) / (N//2))
 
-    def subthread(x, y, batch, num_blocks, block_size):
+    def subthread(x, y, burst, num_blocks, block_size):
         half_block_size = block_size // 2
         for block in range(num_blocks):  # Row of X
             for i in range(half_block_size):  # Column of X
-                even = x[(block * block_size + i) * batches + batch]
-                odd = x[(block * block_size + half_block_size + i) * batches + batch]
+                even = x[(block * block_size + i) * bursts + burst]
+                odd = x[(block * block_size + half_block_size + i) * bursts + burst]
 
                 # odd *= all_factors[block * half_block_size]
                 exponent = -2 * np.pi * block * half_block_size / N
                 twiddle = math.cos(exponent) + 1j * math.sin(exponent)
                 odd *= twiddle
 
-                y[(block * half_block_size + i) * batches + batch] = even + odd
-                y[((num_blocks + block) * half_block_size + i) * batches + batch] = even - odd
+                y[(block * half_block_size + i) * bursts + burst] = even + odd
+                y[((num_blocks + block) * half_block_size + i) * bursts + burst] = even - odd
 
     num_blocks = min_block_size
     block_size = N // min_block_size
@@ -82,7 +82,7 @@ def FFT_step2(X, N, batches, min_block_size):
     while num_blocks < N:
         Y = np.empty_like(X)
 
-        for b in range(batches):
+        for b in range(bursts):
             subthread(X, Y, b, num_blocks, block_size)
 
         X = Y
@@ -92,8 +92,46 @@ def FFT_step2(X, N, batches, min_block_size):
     return X
 
 
-def FFT_step2_transpose(X, N, batches, min_block_size):
+def FFT_step1_transpose(x, N, bursts, min_block_size):
+    n = np.arange(min_block_size)
+    k = n[:, None]
+    M = np.exp(-2j * np.pi * n * k / min_block_size).flatten()
+
+    y = np.empty(N * bursts, dtype=np.complex64)
+
+    def subthread(burst):
+        num_blocks = N // min_block_size
+        for block in range(num_blocks):
+            for k in range(min_block_size):
+                y_k = 0
+                for n in range(min_block_size):
+                    elt = x[(n * num_blocks + block) * bursts + burst]
+                    # twiddle = M[k * min_block_size + n]
+                    exponent = -2 * np.pi * n * k / min_block_size
+                    twiddle = math.cos(exponent) + 1j * math.sin(exponent)
+                    y_k += elt * twiddle
+
+                # y[(k * num_blocks + block) * bursts + burst] = y_k
+                y[burst * N + k + block * min_block_size] = y_k
+
+    for b in range(bursts):
+        subthread(b)
+
+    return y
+
+
+def FFT_step2_transpose(X, N, bursts, min_block_size):
     all_factors = np.exp(-1j * np.pi * np.arange(N // 2) / (N//2))
+
+    # Preload into 'shared mem'
+    num_blocks = N // min_block_size
+    local = np.empty_like(X)
+    for burst in range(bursts):
+        for block in range(num_blocks):
+            for element in range(min_block_size):
+                val = X[burst * N + element + block * min_block_size]
+                local[burst * N + block + element * num_blocks] = val
+
 
     num_blocks = min_block_size
     block_size = N // min_block_size
@@ -102,11 +140,11 @@ def FFT_step2_transpose(X, N, batches, min_block_size):
     while num_blocks < N:
         Y = np.empty_like(X)
 
-        for burst in range(batches):
+        for burst in range(bursts):
             for block in range(num_blocks):
                 for i in range(half_block_size):
-                    even = X[burst * N + (block * block_size + i)]
-                    odd = X[burst * N + (block * block_size + half_block_size + i)]
+                    even = local[burst * N + (block * block_size + i)]
+                    odd = local[burst * N + (block * block_size + half_block_size + i)]
                     odd *= all_factors[block * half_block_size]
                     # exponent = -2 * np.pi * block * half_block_size / N
                     # twiddle = math.cos(exponent) + 1j * math.sin(exponent)
@@ -115,38 +153,42 @@ def FFT_step2_transpose(X, N, batches, min_block_size):
                     Y[burst * N + (block * half_block_size + i)] = even + odd
                     Y[burst * N + ((num_blocks + block) * half_block_size + i)] = even - odd
 
-        X = Y
+        local = Y
         num_blocks *= 2
         block_size = half_block_size
         half_block_size = block_size // 2
 
-    return X
+    return local
 
 
 if __name__ == '__main__':
 
     N = 512
-    batches = 50
-
+    bursts = 50
     min_block_size = min(N, 32)
-    X = np.asarray(np.random.random(N * batches), dtype=float)
+    epsilon = 10e-4
 
-    out1_ref = FFT_step1_reference(X, N, batches, min_block_size)
-    out2_ref = FFT_step2_reference(out1_ref, N, batches, min_block_size)
-    out1_transpose_ref = np.transpose(out1_ref.reshape((N, batches))).flatten()
-    out2_transpose_ref = np.transpose(out2_ref.reshape((N, batches))).flatten()
+    X = np.asarray(np.random.random(N * bursts), dtype=float)
 
-    out1 = FFT_step1(X, N, batches, min_block_size)
-    out2 = FFT_step2(out1, N, batches, min_block_size)
-    out2_transpose = FFT_step2_transpose(out1_transpose_ref, N, batches, min_block_size)
+    out1_ref = FFT_step1_reference(X, N, bursts, min_block_size)
+    out2_ref = FFT_step2_reference(out1_ref, N, bursts, min_block_size)
+    out1_transpose_ref = np.transpose(out1_ref.reshape((min_block_size, -1, bursts)), (2, 1, 0)).flatten()
+    out2_transpose_ref = np.transpose(out2_ref.reshape((N, bursts))).flatten()
+
+    out1 = FFT_step1(X, N, bursts, min_block_size)
+    out2 = FFT_step2(out1, N, bursts, min_block_size)
+    out1_transpose = FFT_step1_transpose(X, N, bursts, min_block_size)
+    out2_transpose = FFT_step2_transpose(out1_transpose_ref, N, bursts, min_block_size)
 
     success = "\033[92mSuccess!\033[0m"
     failure = "\033[91mFailure :(\033[0m"
 
     print("Phase 1: ",
-          success if np.allclose(out1, out1_ref, atol=10e-6) else failure)
+          success if np.allclose(out1, out1_ref, atol=epsilon) else failure)
     print("Phase 2: ",
-          success if np.allclose(out2, out2_ref, atol=10e-6) else failure)
+          success if np.allclose(out2, out2_ref, atol=epsilon) else failure)
+    print("Phase 1 transpose: ",
+          success if np.allclose(out1_transpose, out1_transpose_ref, atol=epsilon) else failure)
     print("Phase 2 transpose: ",
-          success if np.allclose(out2_transpose, out2_transpose_ref, atol=10e-6) else failure)
+          success if np.allclose(out2_transpose, out2_transpose_ref, atol=epsilon) else failure)
 

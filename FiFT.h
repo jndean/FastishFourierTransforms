@@ -17,12 +17,14 @@ class FiFT {
     ~FiFT();
 
     void run(const REAL_T* input, COMPLEX_T* out);
+    void run_transposed(const REAL_T* input, COMPLEX_T* output);
     
     //private:
     void run_step1(const REAL_T* input, COMPLEX_T* out);
     void run_step2(COMPLEX_T* input, COMPLEX_T* output);
     
-    void run_step2_transposed(COMPLEX_T* input, COMPLEX_T* output);
+    void run_step2_transpose(COMPLEX_T* input, COMPLEX_T* output);
+    void run_step1_transpose(const REAL_T* input, COMPLEX_T* output);
 	
     const size_t m_burst_size;
     const size_t m_batch_size;
