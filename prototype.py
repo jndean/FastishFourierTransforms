@@ -123,7 +123,7 @@ def FFT_step1_transpose(x, N, bursts, min_block_size):
 def FFT_step2_transpose(X, N, bursts, min_block_size):
     all_factors = np.exp(-1j * np.pi * np.arange(N // 2) / (N//2))
 
-    # Preload into 'shared mem'
+    # Preload into 'shared memory'
     num_blocks = N // min_block_size
     local = np.empty_like(X)
     for burst in range(bursts):

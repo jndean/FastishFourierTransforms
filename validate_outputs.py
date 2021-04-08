@@ -6,77 +6,60 @@ import sys
 import prototype
 
 
-success = "\033[92mSuccess!\033[0m"
-failure = "\033[91mFailure :(\033[0m"
+N = 512
+bursts = 10
 atol = 0.5
+
+
+def equal(complex_array, float_array):
+    if (np.allclose(np.real(complex_array), float_array[0::2], atol=atol) and
+            np.allclose(np.imag(complex_array), float_array[1::2], atol=atol)):
+        return "\033[92mSuccess!\033[0m"
+    return "\033[91mFailure :(\033[0m"
 
 
 if __name__ == '__main__':
 
-    N = 512
-    batches = 10
-
-    result = subprocess.run(["make", "FiFT.so"])
-    if result.returncode != 0:
+    if subprocess.run(["make", "FiFT.so"]).returncode != 0:
         sys.exit("Failed to compile FiFT")
+
     fift = ctypes.cdll.LoadLibrary("./FiFT.so")
     min_block_size = ctypes.c_int.in_dll(fift, "base_block").value
 
-    idata = np.frombuffer(np.random.bytes(N * batches), dtype=np.uint8)
-    odata = np.empty(N * batches * 2, dtype=np.float32)
+    data = np.frombuffer(np.random.bytes(N * bursts), dtype=np.uint8)
 
-    # #### Test Step 1 #### #
+    reference1 = prototype.FFT_step1(data, N, bursts, min_block_size)
+    reference2 = prototype.FFT_step2(reference1, N, bursts, min_block_size)
+    ref1_transpose = prototype.FFT_step1_transpose(data, N, bursts, min_block_size)
+    ref2_transpose = prototype.FFT_step2_transpose(ref1_transpose, N, bursts, min_block_size)
 
-    fift.test_step1(idata.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
-                    odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    N,
-                    batches)
+    out1 = np.empty(N * bursts * 2, dtype=np.float32)
+    out2 = np.empty(N * bursts * 2, dtype=np.float32)
+    out1_transpose = np.empty(N * bursts * 2, dtype=np.float32)
+    out2_transpose = np.empty(N * bursts * 2, dtype=np.float32)
 
-    reference1 = prototype.FFT_step1(idata, N, batches, min_block_size).astype(np.complex64)
-    print('Step 1:', success if (
-        np.allclose(np.real(reference1), odata[0::2], atol=atol) and
-        np.allclose(np.imag(reference1), odata[1::2], atol=atol)
-    ) else failure)
+    fift.test_step1(
+        data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        out1.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
+    fift.test_run(
+        data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        out2.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
+    fift.test_step1_transpose(
+        data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+        out1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
+    fift.test_step2_transpose(
+        out1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        out2_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
 
-    # #### Test Step 1 & 2 #### #
-
-    fift.test_run(idata.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
-                  odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                  N,
-                  batches)
-
-    reference2 = prototype.FFT_step2(reference1, N, batches, min_block_size).astype(np.complex64)
-
-    print('Step 1 & 2:', success if (
-        np.allclose(np.real(reference2), odata[0::2], atol=atol) and
-        np.allclose(np.imag(reference2), odata[1::2], atol=atol)
-    ) else failure)
-
-    # #### Test Step 1 Transposed #### #
-    fift.test_step1_transpose(idata.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
-                              odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                              N,
-                              batches)
-
-    ref1_transpose = np.transpose(reference1.reshape((min_block_size, -1, batches)), (2, 1, 0)).flatten()
-
-    print('Step 1 transpose:', success if (
-        np.allclose(np.real(ref1_transpose), odata[0::2], atol=atol) and
-        np.allclose(np.imag(ref1_transpose), odata[1::2], atol=atol)
-    ) else failure)
-
-    # #### Test Step 2 Transposed #### #
-
-    fift.test_step2_transpose(ref1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                              odata.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                              N,
-                              batches)
-
-    ref2_transpose = prototype.FFT_step2_transpose(ref1_transpose, N, batches, min_block_size)
-
-    print('Step 2 transpose:', success if (
-        np.allclose(np.real(ref2_transpose), odata[0::2], atol=atol) and
-        np.allclose(np.imag(ref2_transpose), odata[1::2], atol=atol)
-    ) else failure)
-
-    
+    print('Step 1:', equal(reference1, out1))
+    print('Step 1 & 2:', equal(reference2, out2))
+    print('Step 1 transpose:', equal(ref1_transpose, out1_transpose))
+    print('Step 2 transpose:', equal(ref2_transpose, out2_transpose))

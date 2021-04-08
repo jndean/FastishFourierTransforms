@@ -10,7 +10,8 @@
 #define BASE_BLOCK 32
 #define PI 3.141592653589793
 
-__device__ __constant__ COMPLEX_T twiddles[1024];
+__device__ __constant__ COMPLEX_T s1_twiddles[BASE_BLOCK][BASE_BLOCK];
+__device__ __constant__ COMPLEX_T s2_twiddles[1024];
 
 
 FiFT::FiFT(const size_t burst_size, const size_t batch_size)
@@ -23,12 +24,20 @@ FiFT::FiFT(const size_t burst_size, const size_t batch_size)
     checkCudaErrors(cudaMalloc(&m_workspace, buf_size));
 
     // Precompute FFT twiddles and put them in constant memory
-    COMPLEX_T h_twiddles[burst_size/2];
+    COMPLEX_T h_s1_twiddles[BASE_BLOCK][BASE_BLOCK];
+    COMPLEX_T h_s2_twiddles[burst_size/2];
     for (int k = 0; k < burst_size/2; ++k) {
 	double exponent = -2.0 * PI * k / (double)burst_size;
-	h_twiddles[k] = {(float) cos(exponent), (float) sin(exponent)};
+	h_s2_twiddles[k] = {(float) cos(exponent), (float) sin(exponent)};
     }
-    cudaMemcpyToSymbol(twiddles, h_twiddles, sizeof(COMPLEX_T) * (burst_size/2));
+    for (int n = 0; n < BASE_BLOCK; ++n) {
+	for (int k = 0; k < BASE_BLOCK; ++k) {
+	    double exponent = -2.0 * PI * n * k / (double) BASE_BLOCK;
+	    h_s1_twiddles[n][k] = {(float) cos(exponent), (float) sin(exponent)};
+	}
+    }
+    cudaMemcpyToSymbol(s1_twiddles, h_s1_twiddles, sizeof(s1_twiddles));
+    cudaMemcpyToSymbol(s2_twiddles, h_s2_twiddles, sizeof(s2_twiddles));
 };
 
 FiFT::~FiFT() {
@@ -78,9 +87,8 @@ __global__ static void step1_kernel(const REAL_T* input,
 	    for (int n = 0; n < BASE_BLOCK; ++n) {
 		// TODO: do the multiplication by hand, removing the zero terms
 		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
-		float exponent = -2.0 * PI * n * k / (float) BASE_BLOCK;
-		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
 		//COMPLEX_T twiddle = {0.0f, 0.0f};
+		COMPLEX_T twiddle = s1_twiddles[n][k];
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
 	    
@@ -111,16 +119,15 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 
     const int num_blocks = burst_size / BASE_BLOCK;
 
-    // TODO: store as real or complex? i.e. cast cost or shared mem cost?
-    __shared__ REAL_T shared_mem[BASE_BLOCK * STEP1_THREADBLOCK];
+    // TODO: store as real or complex(or int32!)? i.e. cast cost or shared mem cost?
+    __shared__ REAL_T tile[BASE_BLOCK * BASE_BLOCK];
 
-    // Multiply each block by the base case twiddle matrix
     for (int block = 0; block < num_blocks; ++block) {
 
 	// Read the whole block into shared mem in a loop
 	// Store it transposed, so adjacent threads aren't getting bank conflicts
 	const REAL_T* global_block = &input[burst + block * batch_size];
-	REAL_T* local_block = &shared_mem[threadIdx.x];
+	REAL_T* local_block = &tile[threadIdx.x];
 	for (int k = 0; k < BASE_BLOCK; ++k) {
 	    local_block[k * STEP1_THREADBLOCK] = global_block[k * num_blocks * batch_size];
 	}
@@ -133,13 +140,15 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 	    for (int n = 0; n < BASE_BLOCK; ++n) {
 		// TODO: do the multiplication by hand, removing the zero terms
 		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
-		float exponent = -2.0 * PI * n * k / (float) BASE_BLOCK;
-		COMPLEX_T twiddle = {cos(exponent), sin(exponent)};
 		//COMPLEX_T twiddle = {0.0f, 0.0f};
+		COMPLEX_T twiddle = s1_twiddles[n][k];
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
 	    
-	    output[burst + (block + k * num_blocks) * batch_size] = y_k;
+	    //output[burst + (block + k * num_blocks) * batch_size] = y_k;
+	    // TODO: These writes aren't coalesced, but for now the compute bottleneck
+	    // means that doesn't matter... Later add a global readwrite step afterwards?
+	    output[burst * burst_size + k + block * BASE_BLOCK] = y_k;
 	}
     } 
 }
@@ -147,11 +156,11 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 
 void FiFT::run_step1_transpose(const REAL_T* input, COMPLEX_T* output)
 {
-    int num_blocks = (m_batch_size + STEP1_THREADBLOCK - 1) / STEP1_THREADBLOCK;
-    step1_transpose_kernel<<<num_blocks, STEP1_THREADBLOCK>>>(input,
-							      output,
-							      m_burst_size,
-							      m_batch_size);
+    int num_blocks = (m_batch_size + BASE_BLOCK - 1) / BASE_BLOCK;
+    step1_transpose_kernel<<<num_blocks, BASE_BLOCK>>>(input,
+						       output,
+						       m_burst_size,
+						       m_batch_size);
 }
 
 
@@ -232,7 +241,7 @@ __global__ static void step2_transpose_kernel(const COMPLEX_T* input,
 	COMPLEX_T even = local[block * block_size + block_elt];
 	COMPLEX_T odd = local[block * block_size + half_block_size + block_elt];
 	
-	COMPLEX_T twiddle = twiddles[block * half_block_size];
+	COMPLEX_T twiddle = s2_twiddles[block * half_block_size];
 	odd = cuCmulf(odd, twiddle);
 
 	__syncthreads();
