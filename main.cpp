@@ -48,8 +48,8 @@ int main(int argc, char** argv) {
     cudaEventCreate(&stop);
     
     cudaEventRecord(start);
-    for (int i=0; i<repetitions; ++i) {
-	fift.run(d_input, d_output);
+    for (int i = 0; i < repetitions; ++i) {
+	fift.run_transposed(d_input, d_output);
     }
     cudaEventRecord(stop);
 

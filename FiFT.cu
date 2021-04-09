@@ -119,17 +119,18 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 
     const int num_blocks = burst_size / BASE_BLOCK;
 
-    // TODO: store as real or complex(or int32!)? i.e. cast cost or shared mem cost?
-    __shared__ REAL_T tile[BASE_BLOCK * BASE_BLOCK];
+    // Store as float not int8. Saves on later casts, and means there's one
+    // element per shared memory bank
+    __shared__ float tile[BASE_BLOCK * BASE_BLOCK];
 
     for (int block = 0; block < num_blocks; ++block) {
 
-	// Read the whole block into shared mem in a loop
+	// Read the whole block into shared memory
 	// Store it transposed, so adjacent threads aren't getting bank conflicts
 	const REAL_T* global_block = &input[burst + block * batch_size];
-	REAL_T* local_block = &tile[threadIdx.x];
+	float* local_block = &tile[threadIdx.x];
 	for (int k = 0; k < BASE_BLOCK; ++k) {
-	    local_block[k * STEP1_THREADBLOCK] = global_block[k * num_blocks * batch_size];
+	    local_block[k * BASE_BLOCK] = global_block[k * num_blocks * batch_size];
 	}
 	
 	// Each element in the output block
@@ -138,19 +139,22 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 
 	    // Multiply the block by a row from the twiddle matrix
 	    for (int n = 0; n < BASE_BLOCK; ++n) {
-		// TODO: do the multiplication by hand, removing the zero terms
-		COMPLEX_T term = {(float) local_block[n * STEP1_THREADBLOCK], 0};
-		//COMPLEX_T twiddle = {0.0f, 0.0f};
-		COMPLEX_T twiddle = s1_twiddles[n][k];
+		// Seems it's still faster to do complex multiplication with a zero complex term than
+		// do the mul separately with fewer terms (does it compile to use double instrucitons maybe?)
+		COMPLEX_T term = {(float)local_block[n * BASE_BLOCK], 0};
+		
+		// Twiddle matrix is symmetric, so can just put [k][n] the way round that means
+		// __constant__ memory access is done with broadcasts :D
+		COMPLEX_T twiddle = s1_twiddles[k][n];
 		y_k = cuCaddf(y_k, cuCmulf(term, twiddle));
 	    }
 	    
 	    //output[burst + (block + k * num_blocks) * batch_size] = y_k;
-	    // TODO: These writes aren't coalesced, but for now the compute bottleneck
-	    // means that doesn't matter... Later add a global readwrite step afterwards?
+	    // These writes aren't coalesced yet...
 	    output[burst * burst_size + k + block * BASE_BLOCK] = y_k;
 	}
-    } 
+    }
+
 }
 
 
@@ -237,7 +241,7 @@ __global__ static void step2_transpose_kernel(const COMPLEX_T* input,
 	int block = element / half_block_size;
 	int block_elt = element % half_block_size;
 	
-	// would like TODO an async sharedmem read here, but my GPU is too old
+	// This is where I might try an async shared mem load? If my GPU supported it...
 	COMPLEX_T even = local[block * block_size + block_elt];
 	COMPLEX_T odd = local[block * block_size + half_block_size + block_elt];
 	
