@@ -7,8 +7,11 @@
 #include <helper_cuda.h>
 
 
-#define BASE_BLOCK 32
 #define PI 3.141592653589793
+
+#define BASE_BLOCK 32
+#define BASE_BLOCK_LOG2 5
+
 
 __device__ __constant__ COMPLEX_T s1_twiddles[BASE_BLOCK][BASE_BLOCK];
 __device__ __constant__ COMPLEX_T s2_twiddles[1024];
@@ -63,7 +66,7 @@ __global__ static void step1_kernel(const REAL_T* input,
     const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
     if (burst >= batch_size) return;
 
-    const int num_blocks = burst_size / BASE_BLOCK;
+    const int num_blocks = burst_size >> BASE_BLOCK_LOG2;
 
     // TODO: store as real or complex? i.e. cast ost or shared mem cost?
     __shared__ REAL_T shared_mem[BASE_BLOCK * STEP1_THREADBLOCK];
@@ -117,7 +120,7 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
     const int burst =  blockDim.x * blockIdx.x + threadIdx.x;
     if (burst >= batch_size) return;
 
-    const int num_blocks = burst_size / BASE_BLOCK;
+    const int num_blocks = burst_size >> BASE_BLOCK_LOG2;
 
     // Store as float not int8. Saves on later casts, and means there's one
     // element per shared memory bank
@@ -160,7 +163,7 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 
 void FiFT::run_step1_transpose(const REAL_T* input, COMPLEX_T* output)
 {
-    int num_blocks = (m_batch_size + BASE_BLOCK - 1) / BASE_BLOCK;
+    int num_blocks = (m_batch_size + BASE_BLOCK - 1) >> BASE_BLOCK_LOG2;
     step1_transpose_kernel<<<num_blocks, BASE_BLOCK>>>(input,
 						       output,
 						       m_burst_size,
@@ -223,15 +226,21 @@ void FiFT::run_step2(COMPLEX_T* input, COMPLEX_T* output)
 
 
 __global__ static void step2_transpose_kernel(const COMPLEX_T* input,
-					       COMPLEX_T* output,
-					       const int burst_size)
+					      COMPLEX_T* output,
+					      const int burst_size)
 {
     const int burst = blockIdx.x;
     const int element = threadIdx.x;
 
     extern __shared__ COMPLEX_T local[];
-    local[element] = input[burst * burst_size + element];
-    local[element + burst_size/2] = input[burst * burst_size + element + burst_size/2];
+    int num_step1_blocks = burst_size >> BASE_BLOCK_LOG2;
+    int step1_block = element >> BASE_BLOCK_LOG2;
+    int step1_block_element = element & (BASE_BLOCK - 1);
+    int local_idx = step1_block + step1_block_element * num_step1_blocks;
+    local[local_idx] = input[burst * burst_size + element];
+    step1_block += num_step1_blocks / 2;
+    local_idx = step1_block + step1_block_element * num_step1_blocks;
+    local[local_idx] = input[burst * burst_size + element + burst_size/2];
 
     int num_blocks = BASE_BLOCK;
     int block_size = burst_size / num_blocks;
@@ -287,7 +296,7 @@ void FiFT::run_transposed(const REAL_T* input, COMPLEX_T* output) {
 void FiFT::run(const REAL_T* input, COMPLEX_T* output) {
     COMPLEX_T *step2_input = m_workspace;
     COMPLEX_T *step2_output = output;
-    int N = m_burst_size / BASE_BLOCK, log2N = 1;
+    int N = m_burst_size >> BASE_BLOCK_LOG2, log2N = 1;
     while (N >>= 1) log2N++;
     if (log2N & 1) std::swap(step2_input, step2_output);
     
