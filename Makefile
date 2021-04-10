@@ -20,4 +20,4 @@ FiFT.so: FiFT.cu FiFT.h
 
 
 clean:
-	rm *.o *~ *.so
+	rm *.o *~ *.so ${TARGET}

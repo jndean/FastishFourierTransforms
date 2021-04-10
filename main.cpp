@@ -38,22 +38,24 @@ int main(int argc, char** argv) {
     }
     cudaMemcpy(d_input, h_input, num_elts * sizeof(REAL_T), cudaMemcpyHostToDevice);
 
-
-    // Prep the workspace //
     FiFT fift(burst_size, batch_size);
-
-    // Run and time //
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-    
+
+    // Warmup
+    for (int i = 0; i < 3; ++i) {
+	fift.run_transposed(d_input, d_output);
+    }
+
+    // Run
     cudaEventRecord(start);
     for (int i = 0; i < repetitions; ++i) {
 	fift.run_transposed(d_input, d_output);
     }
     cudaEventRecord(stop);
 
-    
+    // Retrieve output
     cudaMemcpy(h_output, d_output, num_elts * sizeof(COMPLEX_T), cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
 

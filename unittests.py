@@ -8,12 +8,13 @@ import prototype
 
 N = 512
 bursts = 10
-atol = 0.5
+rtol = 10e-2
+atol = 10e-2
 
 
 def equal(complex_array, float_array):
-    if (np.allclose(np.real(complex_array), float_array[0::2], atol=atol) and
-            np.allclose(np.imag(complex_array), float_array[1::2], atol=atol)):
+    if (np.allclose(np.real(complex_array), float_array[0::2], atol=atol, rtol=rtol) and
+            np.allclose(np.imag(complex_array), float_array[1::2], atol=atol, rtol=rtol)):
         return "\033[92mSuccess!\033[0m"
     return "\033[91mFailure :(\033[0m"
 

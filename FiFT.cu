@@ -11,6 +11,7 @@
 
 #define BASE_BLOCK 32
 #define BASE_BLOCK_LOG2 5
+#define BASE_BLOCK_MASK (BASE_BLOCK - 1)
 
 
 __device__ __constant__ COMPLEX_T s1_twiddles[BASE_BLOCK][BASE_BLOCK];
@@ -141,6 +142,7 @@ __global__ static void step1_transpose_kernel(const REAL_T* input,
 	    COMPLEX_T y_k = {0.0f, 0.0f};
 
 	    // Multiply the block by a row from the twiddle matrix
+	    #pragma unroll
 	    for (int n = 0; n < BASE_BLOCK; ++n) {
 		// Seems it's still faster to do complex multiplication with a zero complex term than
 		// do the mul separately with fewer terms (does it compile to use double instrucitons maybe?)
@@ -233,34 +235,38 @@ __global__ static void step2_transpose_kernel(const COMPLEX_T* input,
     const int element = threadIdx.x;
 
     extern __shared__ COMPLEX_T local[];
-    int num_step1_blocks = burst_size >> BASE_BLOCK_LOG2;
+    // Load elements accounting for how they're twisted within the burst by step1
+    int num_base_blocks = burst_size >> BASE_BLOCK_LOG2;
     int step1_block = element >> BASE_BLOCK_LOG2;
-    int step1_block_element = element & (BASE_BLOCK - 1);
-    int local_idx = step1_block + step1_block_element * num_step1_blocks;
+    int step1_block_element = element & BASE_BLOCK_MASK;
+    int local_idx = step1_block + step1_block_element * num_base_blocks;
     local[local_idx] = input[burst * burst_size + element];
-    step1_block += num_step1_blocks / 2;
-    local_idx = step1_block + step1_block_element * num_step1_blocks;
+    local_idx += num_base_blocks >> 1;
     local[local_idx] = input[burst * burst_size + element + burst_size/2];
 
     int num_blocks = BASE_BLOCK;
-    int block_size = burst_size / num_blocks;
+    int block_size = num_base_blocks;
     int half_block_size = block_size >> 1;
-    
+
     while (num_blocks < burst_size) {
+	
 	int block = element / half_block_size;
 	int block_elt = element % half_block_size;
 	
 	// This is where I might try an async shared mem load? If my GPU supported it...
-	COMPLEX_T even = local[block * block_size + block_elt];
-	COMPLEX_T odd = local[block * block_size + half_block_size + block_elt];
-	
-	COMPLEX_T twiddle = s2_twiddles[block * half_block_size];
-	odd = cuCmulf(odd, twiddle);
+	int idx = block * block_size + block_elt;
+	COMPLEX_T even = local[idx];
+	COMPLEX_T odd = local[idx + half_block_size];
 
+	idx = block * half_block_size;
+	COMPLEX_T twiddle = s2_twiddles[idx];
+	odd = cuCmulf(odd, twiddle);
+	idx += block_elt;
+	
 	__syncthreads();
 	
-	local[block * half_block_size + block_elt] = cuCaddf(even, odd);
-	local[(block + num_blocks) * half_block_size + block_elt] = cuCsubf(even, odd);
+	local[idx] = cuCaddf(even, odd);
+	local[idx + burst_size/2] = cuCsubf(even, odd);
 	
 	num_blocks <<= 1;
 	block_size = half_block_size;
