@@ -27,7 +27,13 @@ if __name__ == '__main__':
     fift = ctypes.cdll.LoadLibrary("./FiFT.so")
     min_block_size = ctypes.c_int.in_dll(fift, "base_block").value
 
-    data = np.frombuffer(np.random.bytes(N * bursts), dtype=np.uint8)
+    data = np.empty(N * bursts, float)
+    for f in range(2, N//2, 4):
+        data += np.sin(np.arange(N * bursts) * (f/N))
+    data -= np.min(data)
+    data *= 255 / np.max(data)
+    data = data.astype(np.uint8)
+    # data =np.frombuffer(np.random.bytes(N * bursts), dtype=np.uint8)
 
     reference1 = prototype.FFT_step1(data, N, bursts, min_block_size)
     reference2 = prototype.FFT_step2(reference1, N, bursts, min_block_size)
@@ -38,6 +44,8 @@ if __name__ == '__main__':
     out2 = np.empty(N * bursts * 2, dtype=np.float32)
     out1_transpose = np.empty(N * bursts * 2, dtype=np.float32)
     out2_transpose = np.empty(N * bursts * 2, dtype=np.float32)
+    out1_packed = np.empty(N * bursts * 2, dtype=np.float32)
+    out2_packed = np.empty(N * bursts * 2, dtype=np.float32)
 
     fift.test_step1(
         data.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
@@ -55,8 +63,19 @@ if __name__ == '__main__':
         N, bursts
     )
     fift.test_step2_transpose(
-        out1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        ref1_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
         out2_transpose.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
+
+    fift.test_step1_packed(
+        data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        out1_packed.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        N, bursts
+    )
+    fift.test_step2_packed(
+        out1_packed.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        out2_packed.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
         N, bursts
     )
 
@@ -64,3 +83,5 @@ if __name__ == '__main__':
     print('Step 1 & 2:', equal(reference2, out2))
     print('Step 1 transpose:', equal(ref1_transpose, out1_transpose))
     print('Step 2 transpose:', equal(ref2_transpose, out2_transpose))
+    # print('Step 1 packed:', equal(ref1_transpose, out1_packed))
+    print('Step 1 & 2 packed:', equal(ref2_transpose, out2_packed))

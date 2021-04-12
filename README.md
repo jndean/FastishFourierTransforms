@@ -1,14 +1,15 @@
 # Fast-ish Fourier Transforms
 
-GPUs are pretty good at FFTs, and the Nvidia-provided (closed-source) cuFFT library does a smashing job of implementing efficient R2C FFTs on CUDA devices.
+GPUs are pretty good at FFTs, and the Nvidia-provided (closed-source) cuFFT library does a smashing job of implementing efficient 1D R2C (Real2Complex) FFTs on CUDA devices.
 
 **BUT CAN WE DO BETTER?!?**
 
-Almost certainly not. In this repo I will try anyway, targeting a very specific use case I encountered which *may* be handled suboptimally by cuFFT:
+I definitely cannot. In this repo I try anyway, targeting a very specific use case I am interested in which doesn't play perfectly to cuFFT's tune. My advantages, compared to a team of professional Nvidia engineers, are:
 
-- cuFFT expects the data in "burst-major" form (adjacent elements from each burst are adjacent in memory) whereas our data is in "batch-major" form (the same elements from adjacent bursts in the batch are adjacent in memory), thus requiring a pre-processing step that transposes the data using good coalesced memory accesses. This project will instead have adjacent threads in a warp directly accessing adjacent batch elements. 
-- cuFFT expects floats (or __halfs) as input, but our incoming data is real-valued uint8s. This either requires another pre-processing step (folded into the transposition kernel mentioned above) and hits the global memory bandwidth 4 (or 2) times harder than necessary, or requires using cufft call-backs to translate the data on read. I found the call-backs to have an unexpectedly high performance impact (I assume due to the overhead of setting up the function call for each read?). In this project we can compile the cast into the FFT!
-- cuFFT outputs only the non-redundant complex-valued frequency terms in the R2C operation, saving on some VRAM and write bandwidth. But for our use case we're only interested in the magnitude of the responses, and we're also about to immediately apply a (convolution kernel and then a) bandpass filter to throw away half the results anyway. With this knowledge our project can save on these output costs!  
+- they don't know what the incoming data looks like - in particular cuFFT expects floats (or __halfs if you forgo callback support) in "burst-major" form. Our data arrives as uint8s arranged in "batch-major" form, requiring an extra preprocessing kernel to perform a massive transposition and a type cast with good coalesced accesses. Plus it hits the global memory bandwidth 4 (or 2) times harder than is necessary. cuFFT allows inserting arbitrary code on each load using callbacks, but I found the callbacks to have an unexpectedly high impact on throughput (I assume due to the overhead of setting up each function call), and there's no way for them to overcome the uncoalesced data arrangement. In this project these considerations can be compiled into the FFT design.
 
-Also of interest in this repo: how small does your bandpass filter range need to be before it becomes more efficient not to use an FFT at all, and instead calculate a few frequency bands directly in a big old dot product?
+- cuFFT doesn't understand what parts of the output are important . It already throws away the redundant negative frequency terms for R2C outputs, saving on some VRAM and write bandwidth. But for our use case we're about to apply a bandpass filter to drop half the outputs anyway, and additionally we're only interested in the magnitude of the responses. These will reduce our output bandwidth costs!
+- We only need to support a couple of values for the FFT burst length, so we can template these away and also safely do some things entirely in shared memory. Honestly this might end up being our biggest advantage...
+
+Also of interest: how small does your bandpass filter range need to be before it becomes more efficient not to use an FFT at all, and instead calculate a few frequency bands directly in a big old dot product?
 
