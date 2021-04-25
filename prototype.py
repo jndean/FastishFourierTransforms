@@ -161,6 +161,18 @@ def FFT_step2_transpose(X, N, bursts, min_block_size):
     return local
 
 
+def FFT_packed_reference(X, N, bursts, min_block_size):
+    X1 = X[..., ::2].astype(np.complex64)
+    X2 = X[..., 1::2].astype(np.complex64)
+    X = X1 + 1j * X2
+    
+    out = FFT_step1_reference(X, N // 2, bursts, min_block_size)
+    out = FFT_step2_reference(out, N // 2, bursts, min_block_size)
+
+    return out
+
+
+
 if __name__ == '__main__':
 
     N = 512
@@ -180,6 +192,8 @@ if __name__ == '__main__':
     out1_transpose = FFT_step1_transpose(X, N, bursts, min_block_size)
     out2_transpose = FFT_step2_transpose(out1_transpose_ref, N, bursts, min_block_size)
 
+    out_packed = FFT_packed_reference(X, N, bursts, min_block_size)
+
     success = "\033[92mSuccess!\033[0m"
     failure = "\033[91mFailure :(\033[0m"
 
@@ -191,4 +205,6 @@ if __name__ == '__main__':
           success if np.allclose(out1_transpose, out1_transpose_ref, atol=epsilon) else failure)
     print("Phase 2 transpose: ",
           success if np.allclose(out2_transpose, out2_transpose_ref, atol=epsilon) else failure)
+    print("Packed: ",
+          success if np.allclose(out_packed, out2_ref, atol=epsilon) else failure)
 
